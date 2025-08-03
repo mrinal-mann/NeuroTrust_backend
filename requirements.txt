@@ -1,0 +1,45 @@
+# NeuroTrust Backend Requirements
+
+# Core FastAPI and web framework
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+
+# Machine Learning and Deep Learning
+torch
+torchvision
+torchaudio
+numpy
+scikit-learn
+pandas
+
+# SHAP for explainability
+shap
+
+# Federated Learning
+flwr[simulation]
+
+# Data processing and utilities
+scipy
+matplotlib
+seaborn
+tqdm
+
+# API and utilities
+requests
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+
+# Development and testing
+pytest
+pytest-asyncio
+httpx
+
+# Optional: Database support (if needed later)
+# sqlalchemy
+# psycopg2-binary
+
+# Logging and monitoring
+structlog
