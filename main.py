@@ -1,6 +1,6 @@
 """
 NeuroTrust: Federated Neuro-Symbolic Framework for Software Reliability Prediction
-Main FastAPI application - FIXED VERSION
+Main FastAPI application - UPDATED FOR REAL DATASETS
 """
 
 import logging
@@ -59,13 +59,29 @@ trainer = ModelTrainer(config)
 predictor = ModelPredictor(config)
 fl_client = FederatedClient(config)
 
-# FIXED: Pydantic models for request/response
+# UPDATED: Pydantic models for 21 real software metrics features
 class PredictionRequest(BaseModel):
-    file_complexity: float
-    recent_commits: int
-    defects: int
-    lines_of_code: int
-    last_editor_experience: str  # "junior", "mid", "senior"
+    LOC_BLANK: float
+    BRANCH_COUNT: float
+    LOC_CODE_AND_COMMENT: float
+    LOC_COMMENTS: float
+    CYCLOMATIC_COMPLEXITY: float
+    DESIGN_COMPLEXITY: float
+    ESSENTIAL_COMPLEXITY: float
+    LOC_EXECUTABLE: float
+    HALSTEAD_CONTENT: float
+    HALSTEAD_DIFFICULTY: float
+    HALSTEAD_EFFORT: float
+    HALSTEAD_ERROR_EST: float
+    HALSTEAD_LENGTH: float
+    HALSTEAD_LEVEL: float
+    HALSTEAD_PROG_TIME: float
+    HALSTEAD_VOLUME: float
+    NUM_OPERANDS: float
+    NUM_OPERATORS: float
+    NUM_UNIQUE_OPERANDS: float
+    NUM_UNIQUE_OPERATORS: float
+    LOC_TOTAL: float
 
 class PredictionResponse(BaseModel):
     fault_label: int
@@ -78,7 +94,6 @@ class FLWeightsRequest(BaseModel):
     client_id: str
     round_number: int
 
-# FIXED: Simplified training metrics model
 class TrainingMetrics(BaseModel):
     epochs_trained: int
     best_val_loss: float
@@ -105,8 +120,10 @@ async def root():
     """Health check endpoint"""
     return {
         "message": "NeuroTrust API is running",
-        "version": "1.0.0",
+        "version": "1.0.0 - Real Dataset Support",
         "status": "healthy",
+        "supported_features": 21,
+        "feature_info": "Software metrics from NASA MDP datasets",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -118,6 +135,8 @@ async def health_check():
         "api_status": "healthy",
         "model_loaded": model_exists,
         "data_directory": os.path.exists("data"),
+        "features_supported": 21,
+        "dataset_format": "Software metrics (CM1, JM1 compatible)",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -150,6 +169,7 @@ async def upload_dataset(
         processed_data = data_processor.process_dataset(df)
         
         logger.info(f"Dataset processed: {len(df)} samples, {len(df.columns)} features")
+        logger.info(f"Feature columns: {processed_data['feature_columns']}")
         
         # Train the model
         model, training_metrics = trainer.train_model(processed_data)
@@ -166,7 +186,7 @@ async def upload_dataset(
         
         logger.info(f"Model saved to {model_path}")
         
-        # FIXED: Extract metrics properly for response
+        # Extract metrics properly for response
         final_metrics = training_metrics['final_metrics']
         
         # Create simplified training metrics
@@ -180,14 +200,14 @@ async def upload_dataset(
             final_auc=final_metrics.get('auc', 0.0)
         )
         
-        # Create dataset info - FIXED: Convert keys to strings
-        target_counts = df.get('defects', pd.Series()).value_counts().to_dict()
-        target_distribution_str = {str(k): v for k, v in target_counts.items()}
+        # Create dataset info
+        target_counts = processed_data['dataset_info']['target_distribution']
+        target_distribution_str = {str(i): count for i, count in enumerate(target_counts)}
         
         dataset_info = DatasetInfo(
             filename=filename,
-            samples=len(df),
-            features=len(df.columns),
+            samples=processed_data['dataset_info']['n_samples'],
+            features=processed_data['dataset_info']['n_features'],
             target_distribution=target_distribution_str
         )
         
@@ -265,6 +285,7 @@ async def get_model_info():
             "model_exists": True,
             "training_metrics": checkpoint.get('training_metrics', {}),
             "feature_columns": checkpoint.get('feature_columns', []),
+            "num_features": len(checkpoint.get('feature_columns', [])),
             "last_trained": checkpoint.get('timestamp', "Unknown"),
             "model_size": os.path.getsize("model/model.pt")
         }
@@ -295,7 +316,41 @@ async def list_datasets():
         logger.error(f"Error listing datasets: {str(e)}")
         return {"error": str(e)}
 
-# BONUS: Endpoint to get detailed training history
+@app.get("/features/info")
+async def get_feature_info():
+    """Get information about supported features"""
+    
+    feature_descriptions = {
+        "LOC_BLANK": "Lines of code that are blank",
+        "BRANCH_COUNT": "Number of branches in the code",
+        "LOC_CODE_AND_COMMENT": "Lines containing both code and comments",
+        "LOC_COMMENTS": "Lines containing only comments",
+        "CYCLOMATIC_COMPLEXITY": "Cyclomatic complexity measure",
+        "DESIGN_COMPLEXITY": "Design complexity measure",
+        "ESSENTIAL_COMPLEXITY": "Essential complexity measure", 
+        "LOC_EXECUTABLE": "Executable lines of code",
+        "HALSTEAD_CONTENT": "Halstead content measure",
+        "HALSTEAD_DIFFICULTY": "Halstead difficulty measure",
+        "HALSTEAD_EFFORT": "Halstead effort measure",
+        "HALSTEAD_ERROR_EST": "Halstead error estimate",
+        "HALSTEAD_LENGTH": "Halstead length measure",
+        "HALSTEAD_LEVEL": "Halstead level measure",
+        "HALSTEAD_PROG_TIME": "Halstead programming time",
+        "HALSTEAD_VOLUME": "Halstead volume measure",
+        "NUM_OPERANDS": "Number of operands",
+        "NUM_OPERATORS": "Number of operators",
+        "NUM_UNIQUE_OPERANDS": "Number of unique operands",
+        "NUM_UNIQUE_OPERATORS": "Number of unique operators",
+        "LOC_TOTAL": "Total lines of code"
+    }
+    
+    return {
+        "total_features": 21,
+        "feature_descriptions": feature_descriptions,
+        "target_variable": "defect_label (0=No Defect, 1=Defect)",
+        "compatible_datasets": ["CM1", "JM1", "NASA MDP datasets"]
+    }
+
 @app.get("/model/training-history")
 async def get_training_history():
     """Get detailed training history from the saved model"""
@@ -310,7 +365,8 @@ async def get_training_history():
             "training_history": training_metrics.get('training_history', {}),
             "model_config": training_metrics.get('model_config', {}),
             "epochs_trained": training_metrics.get('epochs_trained', 0),
-            "best_val_loss": training_metrics.get('best_val_loss', 0.0)
+            "best_val_loss": training_metrics.get('best_val_loss', 0.0),
+            "feature_count": len(checkpoint.get('feature_columns', []))
         }
         
     except Exception as e:

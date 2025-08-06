@@ -56,3 +56,5 @@ htmlcov/
 
 # Documentation
 docs/_build/
+
+data
