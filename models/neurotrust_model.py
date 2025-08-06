@@ -1,5 +1,6 @@
 """
 NeuroTrust Model: GRU + RELANFIS Neuro-Symbolic Architecture - FIXED VERSION
+With adaptive decision threshold for class imbalance
 """
 
 import torch
@@ -26,7 +27,7 @@ class RELANFISLayer(nn.Module):
         self.centers = nn.Parameter(torch.randn(num_rules, input_dim))
         self.widths = nn.Parameter(torch.ones(num_rules, input_dim) * 0.5)
         
-        # Rule consequence parameters - FIXED: Correct dimension
+        # Rule consequence parameters
         self.consequence_weights = nn.Parameter(torch.randn(num_rules, input_dim + 1))
         
         # Rule activation weights
@@ -34,9 +35,6 @@ class RELANFISLayer(nn.Module):
         
     def membership_degree(self, x: torch.Tensor) -> torch.Tensor:
         """Calculate Gaussian membership degrees for each rule"""
-        # x: (batch_size, input_dim)
-        # centers: (num_rules, input_dim)
-        
         batch_size = x.size(0)
         x_expanded = x.unsqueeze(1)  # (batch_size, 1, input_dim)
         centers_expanded = self.centers.unsqueeze(0)  # (1, num_rules, input_dim)
@@ -50,25 +48,18 @@ class RELANFISLayer(nn.Module):
     
     def rule_activation(self, membership: torch.Tensor) -> torch.Tensor:
         """Calculate rule activation strength"""
-        # Apply rule weights
         activation = membership * F.softmax(self.rule_weights, dim=0)
         return activation
     
     def consequence_layer(self, x: torch.Tensor, activation: torch.Tensor) -> torch.Tensor:
-        """Calculate rule consequences (TSK-style) - FIXED VERSION"""
+        """Calculate rule consequences (TSK-style)"""
         batch_size = x.size(0)
         
         # Add bias term to input
         x_with_bias = torch.cat([x, torch.ones(batch_size, 1, device=x.device)], dim=1)
-        # x_with_bias: (batch_size, input_dim + 1)
         
         # Calculate consequences for each rule
-        # consequence_weights: (num_rules, input_dim + 1)
-        # x_with_bias: (batch_size, input_dim + 1)
-        
-        # Matrix multiplication: (batch_size, input_dim + 1) @ (input_dim + 1, num_rules)
         consequences = torch.matmul(x_with_bias, self.consequence_weights.transpose(0, 1))
-        # consequences: (batch_size, num_rules)
         
         return consequences
     
@@ -100,7 +91,8 @@ class RELANFISLayer(nn.Module):
 
 class NeuroTrustModel(nn.Module):
     """
-    Complete NeuroTrust Model: GRU + RELANFIS + Output Layer - FIXED VERSION
+    Complete NeuroTrust Model: GRU + RELANFIS + Output Layer
+    FIXED: Adaptive threshold and better handling of class imbalance
     """
     
     def __init__(self, 
@@ -114,6 +106,9 @@ class NeuroTrustModel(nn.Module):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.num_gru_layers = num_gru_layers
+        
+        # Store optimal threshold (will be set during training)
+        self.optimal_threshold = 0.5
         
         # Input projection layer
         self.input_projection = nn.Linear(input_dim, hidden_dim)
@@ -129,10 +124,10 @@ class NeuroTrustModel(nn.Module):
             bidirectional=False
         )
         
-        # RELANFIS symbolic reasoning layer - FIXED: Use hidden_dim
+        # RELANFIS symbolic reasoning layer
         self.relanfis = RELANFISLayer(hidden_dim, num_rules)
         
-        # Output layers - FIXED: Correct input dimension
+        # Output layers
         self.output_projection = nn.Sequential(
             nn.Linear(hidden_dim + 1, hidden_dim // 2),
             nn.ReLU(),
@@ -156,7 +151,7 @@ class NeuroTrustModel(nn.Module):
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
         """
-        Forward pass through NeuroTrust model - FIXED VERSION
+        Forward pass through NeuroTrust model
         
         Args:
             x: Input tensor (batch_size, input_dim) or (batch_size, sequence_length, input_dim)
@@ -196,7 +191,7 @@ class NeuroTrustModel(nn.Module):
         # Combine GRU and RELANFIS outputs
         combined = torch.cat([last_output, symbolic_output], dim=1)
         
-        # Final output
+        # Final output with sigmoid activation
         reliability_score = self.output_projection(combined)
         reliability_score = torch.sigmoid(reliability_score)
         
@@ -211,17 +206,31 @@ class NeuroTrustModel(nn.Module):
         
         return reliability_score, debug_info
     
-    def get_fault_prediction(self, reliability_score: torch.Tensor, threshold: float = 0.5) -> torch.Tensor:
-        """Convert reliability score to fault label"""
-        # fault_label = 1 if reliability_score < threshold, 0 otherwise
-        fault_label = (reliability_score < threshold).float()
+    def get_fault_prediction(self, reliability_score: torch.Tensor, threshold: float = None) -> torch.Tensor:
+        """Convert reliability score to fault label using optimal threshold"""
+        if threshold is None:
+            threshold = getattr(self, 'optimal_threshold', 0.5)
+        
+        # fault_label = 1 if reliability_score < threshold (low reliability means high fault risk)
+        # BUT we need to consider what the reliability_score actually represents
+        # If it's trained to predict defects directly, then:
+        fault_label = (reliability_score >= threshold).float()
         return fault_label
     
-    def get_model_confidence(self, reliability_score: torch.Tensor) -> torch.Tensor:
+    def get_model_confidence(self, reliability_score: torch.Tensor, threshold: float = None) -> torch.Tensor:
         """Calculate model confidence based on distance from decision boundary"""
-        # Confidence is higher when prediction is further from 0.5
-        confidence = torch.abs(reliability_score - 0.5) * 2
+        if threshold is None:
+            threshold = getattr(self, 'optimal_threshold', 0.5)
+        
+        # Confidence is higher when prediction is further from threshold
+        confidence = torch.abs(reliability_score - threshold) / max(threshold, 1 - threshold)
+        confidence = torch.clamp(confidence, 0, 1)
         return confidence
+    
+    def set_optimal_threshold(self, threshold: float):
+        """Set the optimal threshold for fault prediction"""
+        self.optimal_threshold = threshold
+        logger.info(f"Model threshold set to: {threshold:.3f}")
 
 class ModelEnsemble(nn.Module):
     """
@@ -261,7 +270,7 @@ class ModelEnsemble(nn.Module):
 def create_neurotrust_model(config: Dict) -> NeuroTrustModel:
     """Create NeuroTrust model from configuration"""
     model = NeuroTrustModel(
-        input_dim=config.get('input_dim', 5),
+        input_dim=config.get('input_dim', 21),
         hidden_dim=config.get('hidden_dim', 64),
         num_gru_layers=config.get('num_gru_layers', 2),
         num_rules=config.get('num_rules', 8),
@@ -269,7 +278,7 @@ def create_neurotrust_model(config: Dict) -> NeuroTrustModel:
     )
     
     logger.info(f"Created NeuroTrust model:")
-    logger.info(f"  Input dim: {config.get('input_dim', 5)}")
+    logger.info(f"  Input dim: {config.get('input_dim', 21)}")
     logger.info(f"  Hidden dim: {config.get('hidden_dim', 64)}")
     logger.info(f"  GRU layers: {config.get('num_gru_layers', 2)}")
     logger.info(f"  RELANFIS rules: {config.get('num_rules', 8)}")

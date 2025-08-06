@@ -174,13 +174,14 @@ async def upload_dataset(
         # Train the model
         model, training_metrics = trainer.train_model(processed_data)
         
-        # Save the trained model
+        # Save the trained model with optimal threshold
         model_path = "model/model.pt"
         torch.save({
             'model_state_dict': model.state_dict(),
             'feature_columns': processed_data['feature_columns'],
             'scaler_params': processed_data['scaler_params'],
             'training_metrics': training_metrics,
+            'optimal_threshold': training_metrics.get('optimal_threshold', 0.5),
             'timestamp': datetime.now().isoformat()
         }, model_path)
         
@@ -279,13 +280,19 @@ async def get_model_info():
         if not os.path.exists("model/model.pt"):
             return {"message": "No model found"}
         
-        checkpoint = torch.load("model/model.pt", map_location='cpu')
+        checkpoint = torch.load("model/model.pt", map_location='cpu', weights_only=False)
+        
+        # Get actual model architecture from saved config
+        training_metrics = checkpoint.get('training_metrics', {})
+        model_config = training_metrics.get('model_config', {})
         
         return {
             "model_exists": True,
             "training_metrics": checkpoint.get('training_metrics', {}),
             "feature_columns": checkpoint.get('feature_columns', []),
             "num_features": len(checkpoint.get('feature_columns', [])),
+            "model_architecture": model_config,
+            "optimal_threshold": training_metrics.get('optimal_threshold', 0.5),
             "last_trained": checkpoint.get('timestamp', "Unknown"),
             "model_size": os.path.getsize("model/model.pt")
         }
@@ -372,6 +379,7 @@ async def get_training_history():
     except Exception as e:
         logger.error(f"Error getting training history: {str(e)}")
         return {"error": str(e)}
+
 
 if __name__ == "__main__":
     uvicorn.run(
