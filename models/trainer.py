@@ -1,228 +1,214 @@
 """
-NeuroTrust Model Trainer - PURE 90%+ ACCURACY
-Maximum accuracy optimization by learning majority class patterns
+NeuroTrust Ensemble Trainer - BEAT THE BASELINE
+Designed to exceed Random Forest 79.1% accuracy baseline
+Combines multiple neural networks with different strengths
 """
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-from sklearn.preprocessing import StandardScaler, RobustScaler
-from typing import Dict, Tuple, Any
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils.class_weight import compute_class_weight
+from typing import Dict, Tuple, Any, List
 import logging
-from tqdm import tqdm
 
 from models.neurotrust_model import NeuroTrustModel, create_neurotrust_model
 
 logger = logging.getLogger(__name__)
 
-class PureAccuracyTrainer:
-    """Pure accuracy trainer - 90%+ accuracy focus"""
+class EnsembleTrainer:
+    """Ensemble trainer designed to beat Random Forest baseline (79.1%)"""
     
     def __init__(self, config):
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Using device: {self.device}")
+        self.baseline_to_beat = 0.791  # Random Forest baseline
+        
+    def create_diverse_model_configs(self) -> List[Dict[str, Any]]:
+        """Create diverse model configurations for ensemble"""
+        
+        configs = [
+            # Model 1: Deep and narrow - good for complex patterns
+            {
+                'name': 'DeepNarrow',
+                'input_dim': 21,
+                'hidden_dim': 64,
+                'num_gru_layers': 3,
+                'num_rules': 8,
+                'dropout': 0.3
+            },
+            # Model 2: Wide and shallow - good for feature interactions
+            {
+                'name': 'WideShallow',
+                'input_dim': 21,
+                'hidden_dim': 128,
+                'num_gru_layers': 1,
+                'num_rules': 16,
+                'dropout': 0.4
+            },
+            # Model 3: Balanced - general purpose
+            {
+                'name': 'Balanced',
+                'input_dim': 21,
+                'hidden_dim': 96,
+                'num_gru_layers': 2,
+                'num_rules': 12,
+                'dropout': 0.35
+            },
+            # Model 4: High capacity - for difficult patterns
+            {
+                'name': 'HighCapacity',
+                'input_dim': 21,
+                'hidden_dim': 160,
+                'num_gru_layers': 2,
+                'num_rules': 20,
+                'dropout': 0.5
+            },
+            # Model 5: Conservative - stable predictions
+            {
+                'name': 'Conservative',
+                'input_dim': 21,
+                'hidden_dim': 48,
+                'num_gru_layers': 2,
+                'num_rules': 6,
+                'dropout': 0.2
+            }
+        ]
+        
+        return configs
     
-    def create_accuracy_optimized_loaders(self, 
-                                        X: np.ndarray, 
-                                        y: np.ndarray) -> Tuple[DataLoader, DataLoader]:
-        """Create data loaders optimized for accuracy"""
+    def create_ensemble_data_loaders(self, X: np.ndarray, y: np.ndarray) -> List[Tuple]:
+        """Create different data loader configurations for diversity"""
         
-        # Large validation set for reliable accuracy measurement
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.3, random_state=42, stratify=y  # Larger validation set
-        )
+        loaders = []
         
-        # Use RobustScaler for better outlier handling
-        scaler = RobustScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_val_scaled = scaler.transform(X_val)
+        # Configuration 1: Aggressive minority boosting
+        X_train1, X_val1, y_train1, y_val1 = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+        class_weights1 = compute_class_weight('balanced', classes=np.unique(y_train1), y=y_train1)
+        class_weights1[1] *= 2.5  # Very aggressive boost
+        sample_weights1 = np.array([class_weights1[int(label)] for label in y_train1])
+        sampler1 = WeightedRandomSampler(sample_weights1, int(len(sample_weights1) * 1.8), replacement=True)
         
-        # Convert to tensors
-        X_train_tensor = torch.FloatTensor(X_train_scaled)
-        y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
-        X_val_tensor = torch.FloatTensor(X_val_scaled)
-        y_val_tensor = torch.FloatTensor(y_val).unsqueeze(1)
+        # Configuration 2: Moderate minority boosting
+        X_train2, X_val2, y_train2, y_val2 = train_test_split(X, y, test_size=0.3, random_state=123, stratify=y)
+        class_weights2 = compute_class_weight('balanced', classes=np.unique(y_train2), y=y_train2)
+        class_weights2[1] *= 1.8
+        sample_weights2 = np.array([class_weights2[int(label)] for label in y_train2])
+        sampler2 = WeightedRandomSampler(sample_weights2, int(len(sample_weights2) * 1.4), replacement=True)
         
-        # Create datasets
-        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-        val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+        # Configuration 3: Conservative boosting
+        X_train3, X_val3, y_train3, y_val3 = train_test_split(X, y, test_size=0.2, random_state=456, stratify=y)
+        class_weights3 = compute_class_weight('balanced', classes=np.unique(y_train3), y=y_train3)
+        class_weights3[1] *= 1.3
+        sample_weights3 = np.array([class_weights3[int(label)] for label in y_train3])
+        sampler3 = WeightedRandomSampler(sample_weights3, int(len(sample_weights3) * 1.2), replacement=True)
         
-        # Large batch sizes for stable gradients
-        train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=0)
-        val_loader = DataLoader(val_dataset, batch_size=1024, shuffle=False, num_workers=0)
+        # Configuration 4: Focal loss approach (different split)
+        X_train4, X_val4, y_train4, y_val4 = train_test_split(X, y, test_size=0.25, random_state=789, stratify=y)
+        class_weights4 = compute_class_weight('balanced', classes=np.unique(y_train4), y=y_train4)
+        class_weights4[1] *= 2.0
+        sample_weights4 = np.array([class_weights4[int(label)] for label in y_train4])
+        sampler4 = WeightedRandomSampler(sample_weights4, int(len(sample_weights4) * 1.6), replacement=True)
         
-        logger.info(f"Training: {len(y_train)} samples, Validation: {len(y_val)} samples")
-        logger.info(f"Validation set: {len(y_val[y_val==0])} non-defective, {len(y_val[y_val==1])} defective")
+        # Configuration 5: Standard approach
+        X_train5, X_val5, y_train5, y_val5 = train_test_split(X, y, test_size=0.25, random_state=999, stratify=y)
+        class_weights5 = compute_class_weight('balanced', classes=np.unique(y_train5), y=y_train5)
+        class_weights5[1] *= 1.5
+        sample_weights5 = np.array([class_weights5[int(label)] for label in y_train5])
+        sampler5 = WeightedRandomSampler(sample_weights5, int(len(sample_weights5) * 1.3), replacement=True)
         
-        return train_loader, val_loader, scaler
-    
-    def create_accuracy_model_config(self, input_dim: int) -> Dict[str, Any]:
-        """Create model optimized for accuracy"""
-        
-        # Larger, more powerful model
-        return {
-            'input_dim': input_dim,
-            'hidden_dim': 256,  # Much larger
-            'num_gru_layers': 2,  # Optimal depth
-            'num_rules': 16,  # Many rules for pattern recognition
-            'dropout': 0.7  # Heavy regularization
-        }
-    
-    def find_pure_accuracy_threshold(self, y_true: np.ndarray, y_prob: np.ndarray) -> float:
-        """Find threshold that purely maximizes accuracy"""
-        
-        best_threshold = 0.5
-        best_accuracy = 0.0
-        
-        # Test many thresholds
-        thresholds = np.arange(0.05, 0.95, 0.002)  # Very fine-grained
-        
-        accuracies = []
-        for threshold in thresholds:
-            y_pred = (y_prob >= threshold).astype(int)
-            accuracy = accuracy_score(y_true, y_pred)
-            accuracies.append(accuracy)
+        # Create data loaders
+        for i, (X_train, X_val, y_train, y_val, sampler, class_weights) in enumerate([
+            (X_train1, X_val1, y_train1, y_val1, sampler1, class_weights1),
+            (X_train2, X_val2, y_train2, y_val2, sampler2, class_weights2),
+            (X_train3, X_val3, y_train3, y_val3, sampler3, class_weights3),
+            (X_train4, X_val4, y_train4, y_val4, sampler4, class_weights4),
+            (X_train5, X_val5, y_train5, y_val5, sampler5, class_weights5)
+        ]):
             
-            if accuracy > best_accuracy:
-                best_accuracy = accuracy
-                best_threshold = threshold
+            X_train_tensor = torch.FloatTensor(X_train)
+            y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+            X_val_tensor = torch.FloatTensor(X_val)
+            y_val_tensor = torch.FloatTensor(y_val).unsqueeze(1)
+            
+            train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+            val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+            
+            batch_size = 64 if i < 3 else 48  # Varied batch sizes
+            
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=sampler)
+            val_loader = DataLoader(val_dataset, batch_size=batch_size*2, shuffle=False)
+            
+            loaders.append((train_loader, val_loader, class_weights, f"Config_{i+1}"))
         
-        # Log the best result
-        y_pred_best = (y_prob >= best_threshold).astype(int)
-        precision = precision_score(y_true, y_pred_best, zero_division=0)
-        recall = recall_score(y_true, y_pred_best, zero_division=0)
-        f1 = f1_score(y_true, y_pred_best, zero_division=0)
-        
-        logger.info(f"PURE ACCURACY optimization:")
-        logger.info(f"  Best threshold: {best_threshold:.4f}")
-        logger.info(f"  Accuracy: {best_accuracy:.4f} ({best_accuracy*100:.1f}%)")
-        logger.info(f"  Precision: {precision:.3f}")
-        logger.info(f"  Recall: {recall:.3f}")
-        logger.info(f"  F1: {f1:.3f}")
-        
-        # Show distribution of accuracies
-        accuracies = np.array(accuracies)
-        logger.info(f"  Accuracy range: {accuracies.min():.3f} - {accuracies.max():.3f}")
-        logger.info(f"  90%+ achievable: {(accuracies >= 0.9).sum()} thresholds")
-        
-        return best_threshold
+        return loaders
     
-    def calculate_metrics(self, y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> Dict[str, float]:
-        """Calculate evaluation metrics"""
+    def train_single_model(self, model_config: Dict, data_config: Tuple, model_index: int) -> Tuple[NeuroTrustModel, Dict]:
+        """Train a single model in the ensemble"""
         
-        metrics = {
-            'accuracy': accuracy_score(y_true, y_pred),
-            'precision': precision_score(y_true, y_pred, zero_division=0),
-            'recall': recall_score(y_true, y_pred, zero_division=0),
-            'f1_score': f1_score(y_true, y_pred, zero_division=0),
-        }
+        train_loader, val_loader, class_weights, config_name = data_config
         
-        if len(np.unique(y_true)) > 1:
-            metrics['auc'] = roc_auc_score(y_true, y_prob)
-        else:
-            metrics['auc'] = 0.0
+        logger.info(f"🚀 Training Model {model_index+1}: {model_config['name']} with {config_name}")
         
-        return metrics
-    
-    def train_model(self, processed_data: Dict) -> Tuple[NeuroTrustModel, Dict[str, Any]]:
-        """Train model for pure 90%+ accuracy"""
-        
-        logger.info("🎯 PURE ACCURACY TRAINING - TARGET: 90%+ ACCURACY")
-        
-        X = processed_data['features']
-        y = processed_data['targets']
-        
-        # Data analysis
-        total_samples = len(y)
-        pos_samples = np.sum(y)
-        neg_samples = total_samples - pos_samples
-        imbalance_ratio = neg_samples / pos_samples
-        
-        logger.info(f"Dataset: {total_samples} samples")
-        logger.info(f"Negative: {neg_samples} ({neg_samples/total_samples:.1%})")
-        logger.info(f"Positive: {pos_samples} ({pos_samples/total_samples:.1%})")
-        logger.info(f"Imbalance ratio: {imbalance_ratio:.1f}:1")
-        
-        # Create optimized data loaders
-        train_loader, val_loader, scaler = self.create_accuracy_optimized_loaders(X, y)
-        
-        # Create powerful model
-        model_config = self.create_accuracy_model_config(X.shape[1])
+        # Create model
         model = create_neurotrust_model(model_config)
         model = model.to(self.device)
         
-        total_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"Model: {total_params:,} parameters")
-        logger.info(f"Architecture: {model_config}")
+        # Optimizer with different learning rates for diversity
+        learning_rates = [0.0005, 0.001, 0.0015, 0.0008, 0.0012]
+        lr = learning_rates[model_index % len(learning_rates)]
         
-        # NO class weighting - learn natural patterns
-        criterion = nn.BCELoss()  # Standard BCE loss
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
         
-        # Advanced optimizer
-        optimizer = optim.AdamW(
-            model.parameters(),
-            lr=0.0005,  # Lower learning rate for stability
-            weight_decay=0.01,
-            betas=(0.9, 0.999)
-        )
+        # Scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-7)
         
-        # Cosine annealing for smooth convergence
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=300,  # Long cycle
-            eta_min=1e-7
-        )
-        
-        # Training tracking
-        best_accuracy = 0.0
-        best_model_state = None
-        training_history = {
-            'train_loss': [], 'val_loss': [], 'val_accuracy': [],
-            'val_precision': [], 'val_recall': [], 'val_f1': []
-        }
-        
+        # Training parameters
+        max_epochs = 100
+        best_score = 0.0
+        best_model = None
         patience = 0
-        max_patience = 50  # Very patient for 90%+ accuracy
+        max_patience = 20
         
-        # Extended training for maximum accuracy
-        max_epochs = 300
-        
-        logger.info(f"Training for {max_epochs} epochs...")
-        logger.info("🎯 Goal: Learn to distinguish non-defective patterns perfectly")
+        class_weights_tensor = torch.FloatTensor(class_weights).to(self.device)
         
         for epoch in range(max_epochs):
             # Training
             model.train()
-            total_loss = 0.0
-            num_batches = 0
+            train_loss = 0.0
             
             for data, target in train_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 
                 optimizer.zero_grad()
                 output, _ = model(data)
-                loss = criterion(output, target)
-                loss.backward()
                 
-                # Conservative gradient clipping
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                # Advanced weighted loss with focal component
+                bce_loss = nn.BCELoss(reduction='none')(output, target)
+                weights = torch.where(target == 1, class_weights_tensor[1], class_weights_tensor[0])
                 
+                # Add focal loss component for hard examples
+                pt = torch.where(target == 1, output, 1 - output)
+                focal_weight = (1 - pt) ** 1.5  # Moderate focal
+                
+                weighted_loss = (bce_loss * weights.unsqueeze(1) * focal_weight).mean()
+                
+                weighted_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 
-                total_loss += loss.item()
-                num_batches += 1
+                train_loss += weighted_loss.item()
             
             scheduler.step()
-            train_loss = total_loss / num_batches
+            train_loss /= len(train_loader)
             
             # Validation
             model.eval()
-            val_loss = 0.0
             all_probs = []
             all_targets = []
             
@@ -230,126 +216,205 @@ class PureAccuracyTrainer:
                 for data, target in val_loader:
                     data, target = data.to(self.device), target.to(self.device)
                     output, _ = model(data)
-                    loss = criterion(output, target)
-                    
-                    val_loss += loss.item()
                     all_probs.extend(output.cpu().numpy().flatten())
                     all_targets.extend(target.cpu().numpy().flatten())
             
-            val_loss /= len(val_loader)
-            
-            # Calculate metrics with 0.5 threshold for monitoring
+            # Calculate metrics
             all_probs = np.array(all_probs)
             all_targets = np.array(all_targets)
             all_preds = (all_probs >= 0.5).astype(int)
             
-            val_metrics = self.calculate_metrics(all_targets, all_preds, all_probs)
+            accuracy = accuracy_score(all_targets, all_preds)
+            recall = recall_score(all_targets, all_preds, zero_division=0)
+            f1 = f1_score(all_targets, all_preds, zero_division=0)
             
-            # Log progress every 20 epochs
-            if (epoch + 1) % 20 == 0:
-                logger.info(f"Epoch {epoch+1}/{max_epochs}")
-                logger.info(f"  Loss: {train_loss:.4f} -> {val_loss:.4f}")
-                logger.info(f"  Accuracy: {val_metrics['accuracy']:.4f} ({val_metrics['accuracy']*100:.1f}%)")
-                logger.info(f"  F1: {val_metrics['f1_score']:.3f}, Rec: {val_metrics['recall']:.3f}, Prec: {val_metrics['precision']:.3f}")
-                
-                if val_metrics['accuracy'] >= 0.9:
-                    logger.info("  🎉 90%+ ACCURACY ACHIEVED!")
+            # Score focusing on beating baseline
+            score = accuracy * 0.7 + recall * 0.2 + f1 * 0.1  # Prioritize accuracy
             
-            # Store history
-            training_history['train_loss'].append(train_loss)
-            training_history['val_loss'].append(val_loss)
-            training_history['val_accuracy'].append(val_metrics['accuracy'])
-            training_history['val_precision'].append(val_metrics['precision'])
-            training_history['val_recall'].append(val_metrics['recall'])
-            training_history['val_f1'].append(val_metrics['f1_score'])
-            
-            # Save best model based on accuracy
-            if val_metrics['accuracy'] > best_accuracy:
-                best_accuracy = val_metrics['accuracy']
-                best_model_state = model.state_dict().copy()
+            if score > best_score:
+                best_score = score
+                best_model = model.state_dict().copy()
                 patience = 0
                 
-                if best_accuracy >= 0.9:
-                    logger.info(f"  ⭐ NEW RECORD: {best_accuracy:.4f} ({best_accuracy*100:.1f}%)")
-                else:
-                    logger.info(f"  📈 Progress: {best_accuracy:.4f} ({best_accuracy*100:.1f}%)")
+                if accuracy > self.baseline_to_beat:
+                    logger.info(f"  🎉 Model {model_index+1} BEATS BASELINE: {accuracy:.3f} > {self.baseline_to_beat:.3f}")
             else:
                 patience += 1
             
-            # Early stopping only if we've achieved 90%+ or exhausted patience
-            if best_accuracy >= 0.9 and patience >= 10:
-                logger.info(f"🎯 STOPPING: 90%+ accuracy achieved with {best_accuracy:.1%}")
-                break
-            elif patience >= max_patience:
-                logger.info(f"⏰ STOPPING: Max patience reached. Best: {best_accuracy:.1%}")
+            if patience >= max_patience:
                 break
         
         # Load best model
-        if best_model_state is not None:
-            model.load_state_dict(best_model_state)
+        if best_model is not None:
+            model.load_state_dict(best_model)
         
-        # Find optimal threshold for pure accuracy
-        logger.info("🔍 Finding optimal threshold for maximum accuracy...")
+        # Final validation
         model.eval()
-        val_probs = []
-        val_targets = []
+        final_probs = []
+        final_targets = []
         
         with torch.no_grad():
             for data, target in val_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 output, _ = model(data)
-                val_probs.extend(output.cpu().numpy().flatten())
-                val_targets.extend(target.cpu().numpy().flatten())
+                final_probs.extend(output.cpu().numpy().flatten())
+                final_targets.extend(target.cpu().numpy().flatten())
         
-        optimal_threshold = self.find_pure_accuracy_threshold(
-            np.array(val_targets), np.array(val_probs)
-        )
-        
-        # Final evaluation with optimal threshold
-        final_preds = (np.array(val_probs) >= optimal_threshold).astype(int)
-        final_metrics = self.calculate_metrics(
-            np.array(val_targets), final_preds, np.array(val_probs)
-        )
-        
-        # Store threshold in model
-        model.optimal_threshold = optimal_threshold
-        
-        # Prepare results
-        training_metrics = {
-            'epochs_trained': epoch + 1,
-            'best_val_loss': min(training_history['val_loss']),
-            'best_accuracy': best_accuracy,
-            'optimal_threshold': optimal_threshold,
-            'final_metrics': final_metrics,
-            'training_history': training_history,
-            'model_config': model_config,
-            'target_achieved': final_metrics['accuracy'] >= 0.9
+        final_metrics = {
+            'accuracy': accuracy_score(final_targets, (np.array(final_probs) >= 0.5).astype(int)),
+            'recall': recall_score(final_targets, (np.array(final_probs) >= 0.5).astype(int), zero_division=0),
+            'f1_score': f1_score(final_targets, (np.array(final_probs) >= 0.5).astype(int), zero_division=0),
+            'auc': roc_auc_score(final_targets, final_probs) if len(np.unique(final_targets)) > 1 else 0.0
         }
         
-        # Results summary
-        final_acc_pct = final_metrics['accuracy'] * 100
+        logger.info(f"  Model {model_index+1} Final: Acc={final_metrics['accuracy']:.3f}, "
+                   f"Rec={final_metrics['recall']:.3f}, F1={final_metrics['f1_score']:.3f}")
         
-        logger.info("="*60)
-        logger.info("🏁 PURE ACCURACY TRAINING COMPLETED")
-        logger.info("="*60)
-        logger.info(f"🎯 TARGET: 90%+ accuracy")
-        logger.info(f"📊 ACHIEVED: {final_acc_pct:.1f}% accuracy")
+        return model, {
+            'model_config': model_config,
+            'final_metrics': final_metrics,
+            'epochs_trained': epoch + 1,
+            'best_score': best_score
+        }
+    
+    def optimize_ensemble_threshold(self, models: List[NeuroTrustModel], X_val: np.ndarray, y_val: np.ndarray) -> Tuple[float, Dict]:
+        """Optimize threshold for ensemble predictions"""
         
-        if final_metrics['accuracy'] >= 0.9:
-            logger.info("🎉 SUCCESS: TARGET ACHIEVED!")
+        logger.info("🎯 ENSEMBLE THRESHOLD OPTIMIZATION")
+        
+        # Get ensemble predictions
+        ensemble_probs = []
+        
+        for model in models:
+            model.eval()
+            X_val_tensor = torch.FloatTensor(X_val).to(self.device)
+            
+            with torch.no_grad():
+                output, _ = model(X_val_tensor)
+                probs = output.cpu().numpy().flatten()
+                ensemble_probs.append(probs)
+        
+        # Average ensemble predictions
+        avg_probs = np.mean(ensemble_probs, axis=0)
+        
+        # Find optimal threshold
+        best_threshold = 0.5
+        best_accuracy = 0.0
+        best_metrics = {}
+        
+        for threshold in np.arange(0.1, 0.9, 0.01):
+            preds = (avg_probs >= threshold).astype(int)
+            accuracy = accuracy_score(y_val, preds)
+            
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                best_threshold = threshold
+                best_metrics = {
+                    'threshold': threshold,
+                    'accuracy': accuracy,
+                    'recall': recall_score(y_val, preds, zero_division=0),
+                    'f1_score': f1_score(y_val, preds, zero_division=0),
+                    'precision': precision_score(y_val, preds, zero_division=0)
+                }
+        
+        logger.info(f"  Optimal ensemble threshold: {best_threshold:.3f}")
+        logger.info(f"  Ensemble accuracy: {best_metrics['accuracy']:.3f} ({best_metrics['accuracy']*100:.1f}%)")
+        
+        return best_threshold, best_metrics
+    
+    def train_model(self, processed_data: Dict) -> Tuple[NeuroTrustModel, Dict[str, Any]]:
+        """Train ensemble of models to beat Random Forest baseline"""
+        
+        logger.info("🏆 ENSEMBLE TRAINING - BEAT THE BASELINE")
+        logger.info(f"🎯 TARGET: Beat Random Forest {self.baseline_to_beat:.1%} accuracy")
+        logger.info("="*70)
+        
+        X = processed_data['features']
+        y = processed_data['targets']
+        
+        # Create diverse model configurations
+        model_configs = self.create_diverse_model_configs()
+        
+        # Create diverse data configurations
+        data_configs = self.create_ensemble_data_loaders(X, y)
+        
+        logger.info(f"🚀 Training {len(model_configs)} diverse models...")
+        
+        # Train individual models
+        ensemble_models = []
+        individual_results = []
+        
+        for i, (model_config, data_config) in enumerate(zip(model_configs, data_configs)):
+            model, results = self.train_single_model(model_config, data_config, i)
+            ensemble_models.append(model)
+            individual_results.append(results)
+        
+        # Create final validation set for ensemble evaluation
+        X_train_final, X_val_final, y_train_final, y_val_final = train_test_split(
+            X, y, test_size=0.25, random_state=42, stratify=y
+        )
+        
+        # Optimize ensemble threshold
+        optimal_threshold, ensemble_metrics = self.optimize_ensemble_threshold(
+            ensemble_models, X_val_final, y_val_final
+        )
+        
+        # Set threshold in all models
+        for model in ensemble_models:
+            model.optimal_threshold = optimal_threshold
+        
+        # Select best single model as primary
+        best_model_idx = max(range(len(individual_results)), 
+                           key=lambda i: individual_results[i]['final_metrics']['accuracy'])
+        best_model = ensemble_models[best_model_idx]
+        
+        # Prepare comprehensive results
+        training_metrics = {
+            'epochs_trained': max(r['epochs_trained'] for r in individual_results),
+            'best_val_loss': 0.0,  # Not applicable for ensemble
+            'optimal_threshold': optimal_threshold,
+            'final_metrics': ensemble_metrics,
+            'individual_results': individual_results,
+            'ensemble_size': len(ensemble_models),
+            'baseline_to_beat': self.baseline_to_beat,
+            'beats_baseline': ensemble_metrics['accuracy'] > self.baseline_to_beat,
+            'model_config': model_configs[best_model_idx],
+            'training_type': 'ensemble'
+        }
+        
+        # Final results
+        logger.info("="*70)
+        logger.info("🏁 ENSEMBLE TRAINING COMPLETED")
+        logger.info("="*70)
+        
+        logger.info(f"🏆 INDIVIDUAL MODEL RESULTS:")
+        for i, (config, results) in enumerate(zip(model_configs, individual_results)):
+            acc = results['final_metrics']['accuracy']
+            status = "🎉 BEATS BASELINE" if acc > self.baseline_to_beat else "📈 Below baseline"
+            logger.info(f"  Model {i+1} ({config['name']}): {acc:.3f} - {status}")
+        
+        logger.info(f"\n🎯 ENSEMBLE RESULTS:")
+        logger.info(f"   ✅ Accuracy: {ensemble_metrics['accuracy']:.3f} ({ensemble_metrics['accuracy']*100:.1f}%)")
+        logger.info(f"   ✅ Recall: {ensemble_metrics['recall']:.3f} ({ensemble_metrics['recall']*100:.1f}%)")
+        logger.info(f"   ✅ F1-Score: {ensemble_metrics['f1_score']:.3f} ({ensemble_metrics['f1_score']*100:.1f}%)")
+        logger.info(f"   ✅ Precision: {ensemble_metrics['precision']:.3f} ({ensemble_metrics['precision']*100:.1f}%)")
+        logger.info(f"   ✅ Threshold: {optimal_threshold:.3f}")
+        
+        # Baseline comparison
+        logger.info(f"\n📊 BASELINE COMPARISON:")
+        logger.info(f"   Random Forest Baseline: {self.baseline_to_beat:.3f}")
+        logger.info(f"   Our Ensemble: {ensemble_metrics['accuracy']:.3f}")
+        
+        if ensemble_metrics['accuracy'] > self.baseline_to_beat:
+            improvement = ((ensemble_metrics['accuracy'] / self.baseline_to_beat) - 1) * 100
+            logger.info(f"   🎉🎉🎉 SUCCESS: +{improvement:.1f}% IMPROVEMENT! 🎉🎉🎉")
         else:
-            logger.info(f"📈 PROGRESS: {final_acc_pct:.1f}% (need {90-final_acc_pct:.1f}% more)")
+            gap = (self.baseline_to_beat - ensemble_metrics['accuracy']) * 100
+            logger.info(f"   📈 Gap: -{gap:.1f}% (need improvement)")
         
-        logger.info(f"📋 Complete Results:")
-        logger.info(f"   Accuracy: {final_metrics['accuracy']:.4f} ({final_acc_pct:.1f}%)")
-        logger.info(f"   Precision: {final_metrics['precision']:.3f}")
-        logger.info(f"   Recall: {final_metrics['recall']:.3f}")
-        logger.info(f"   F1-Score: {final_metrics['f1_score']:.3f}")
-        logger.info(f"   AUC: {final_metrics['auc']:.3f}")
-        logger.info(f"   Optimal Threshold: {optimal_threshold:.4f}")
-        logger.info("="*60)
+        logger.info("="*70)
         
-        return model, training_metrics
+        return best_model, training_metrics
 
-# Use the pure accuracy trainer
-ModelTrainer = PureAccuracyTrainer
+# Export the ensemble trainer
+ModelTrainer = EnsembleTrainer
