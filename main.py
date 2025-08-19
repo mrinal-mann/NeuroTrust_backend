@@ -18,7 +18,7 @@ from datetime import datetime
 
 # Import our custom modules
 from models.neurotrust_model import NeuroTrustModel
-from models.trainer import EnsembleTrainer  # UPDATED: Use ensemble trainer
+from models.trainer import EnhancedEnsembleTrainer as EnsembleTrainer  # UPDATED: Use ensemble trainer
 from models.predictor import ModelPredictor
 from federated.fl_client import FederatedClient
 from utils.data_processor import DataProcessor
